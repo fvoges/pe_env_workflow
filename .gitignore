@@ -1,0 +1,8 @@
+pkg/
+Gemfile.lock
+vendor/
+.vagrant/
+.bundle/
+coverage/
+allow_agent_classes/spec/fixtures/
+!allow_agent_classes/spec/fixtures/test_class/
