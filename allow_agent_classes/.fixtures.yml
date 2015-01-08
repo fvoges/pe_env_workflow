@@ -1,0 +1,3 @@
+fixtures:
+  symlinks:
+    "allow_agent_classes": "#{source_dir}"
