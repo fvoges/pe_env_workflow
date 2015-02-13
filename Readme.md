@@ -141,6 +141,16 @@ FACTER_testclass=role::something::new \
   puppet agent -t --environment=feature43
 ```
 
+Or, just the good ol' fashioned way:
+
+```puppet
+node /^vagrant.*/ {
+  if $::testclass {
+    include $::testclass
+  }
+}
+```
+
 ## Method #3
 
 See [https://docs.google.com/a/puppetlabs.com/drawings/d/1qTbdrtobn-PI97z1z9kQ3WWLnQD_pL4ovH_6qXt0mhQ/edit](https://docs.google.com/a/puppetlabs.com/drawings/d/1qTbdrtobn-PI97z1z9kQ3WWLnQD_pL4ovH_6qXt0mhQ/edit)
