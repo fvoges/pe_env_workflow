@@ -77,6 +77,7 @@ __`class_testing`__
 ```puppet
 class class_testing {
   if $::test_class {
+    notice("TESTING: Class=${::test_class}; Environment=${::environment}")
     include $::test_class
   }
 }
