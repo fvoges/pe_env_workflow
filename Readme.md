@@ -4,76 +4,62 @@ __This document is still under development (e.g. better wording)__
 
 ## Overview
 
-This repository aims to propose a solution to a fluid workflow around
-dynamic environment testing when using Puppet Enterprise 3.7's node classifier.
+The situation that we're trying to provide an answer to:
 
-By design, we're affected by two realities:
+* We want to be able to allow certain agents to override their environment
+* We want those agents to be able to quickly test aribtrary classes and
+  environments without having to use the node classifier.
 
-* The node classifier has the ability to enforce an environment (default)
-* The node classifier doesn't allow classifying with arbitrary classes
+Having to classify a node with a class that you just want to quickly try out
+is a little cumbersome.  A typical workflow looks like this:
 
-These are Good Things - we want the ability to lock down an agent's environment
-and we want the console to verify that a class exists in a given environment
-when attempting to classify a group with it.
+1. User creates/modifies a class
+2. Control repository is updated (e.g. if the class is a role/profile or to
+   update the `Puppetfile`, etc).
+3. Push code to VCS server
+4. r10k deploys the code to master(s)
 
-However, we want to be able to test new codes on test machines (e.g. vagrant)
-against temporary environments.  We also want to be able to create a new class
-in that test environment and test an agent against it without having to login
-to the console to do it, or using the API to create a group just for this
-test - a test that will typically be very short-lived.
+At this point, the user's ready to test their work.  They likely created a
+feature branch in the control repository, which provides a new Puppet
+environment to test agents against. Thier new class might only be available in
+this new environment.  If they're iterating on
+a class that's been established and have a group that's already classified with
+it, then they can simply add a node to a console group with an
+"agent-specified" environment.  If it's a brand new class, or one they just
+want to tinker with, they'll need to classify a group with it.  This probably
+involves creating a new group just for this test.
 
-## Scenario
+This might not be a big deal, but it seems to introduce more overhead than
+desired.
 
-* A user wants to use 3.7's node manager for the features it provides, such
-  as RBAC, REST API, and environment authority.
-* The user wants node classification handled exclusively by the 3.7 node
-  manager, including the environment pinning.
-* The user wants test nodes to be able to specify an environment on the fly.
-* The user wants the ability to test arbitrary classes (e.g. roles) without
-  classifying a group with this in the node manager (via the browser or REST
-  API) and without that class being present in mature, static environments.
-* The user wants to create a feature branch from their control repository,
-  providing a new Puppet environment to test an agent against.
-* The user is creating a brand new 'role' or class in this feature branch that
-  isn't present in other environments.
+How can we quickly test agents with an arbitrary class in an agent-specified
+environment?
 
-In Puppet Enterprise 3.7's node classifier, it's not exactly dynamic to do the
-above.  To test new code in a test environment, the user would have to create a
-new node group, match a node against that group, and classify that group with
-the class(es) they want to test (e.g. the new role they're developing).
+## Method #1
 
-### What's undesirable
+![3.7 Groups](img/pe37_node_classifier.png)
 
-The requirement of classifying a node with the class you want to test has
-always been present (duh).  Previously, it was not uncommon to use other means
-of classification outside of the console, such as Hiera with `hiera_include()`,
-logic in `site.pp` to evaluate a custom fact (e.g. `include $::role`), or
-something else.  This afforded dynamic means of classification that didn't
-involve clicking around or making API calls (with some caveats, of course).  PE
-3.7's new node classification features make it a compelling tool to use - RBAC
-and the REST API, for instance.
+1. Ensure that the _default_ group doesn't have any classification.
+2. For any classes that would normally apply to the default group, you might
+   consider creating a secondary "default" group that matches everything and
+   gets classified with what you want (e.g. PE Agents)
+3. Create a new group in the console, for example "Agent Specified". Don't
+   classify this with anything, make it _match_ your test nodes (or pin some
+   to it), set the environment to _agent-specified_ and _override_ other
+   groups, and make its parent _default_.
+4. Create another node group, maybe "Test Agents".  Classify this with the
+   `class_testing` class (see below), make it also match your test agents,
+   set the environment to _production_ (or anything, really), and the _parent_
+   to the "Agent-Specified" group you created in step 3.
 
-Doing this for quick test nodes that live very short lives creates more
-friction and delay than desirable.  Users want to be able to quickly branch
-from their control repository and test a new class in it with as little
-effort as possible.  Creating a node group for this, adding the node to that
-group, adding the test class to that group is a bit too involved for a test.
+__What this does__
 
-## Solution #1
-
-1. Create a new group in the PE console that will remain present. Set the
-   group to inherit the `default` group (or whatever) and set the environment
-   to `agent-specified`
-2. Create a component module or a profile class that evaluates a top-scope
-   variable/fact and calls the `include()` function against its value. For
-   example:
-   ```puppet
-   class env_testing {
-     if $::testclass {
-       include $::testclass
-     }
-   }
-   ```
+Agents will now be able to override their environment themselves because they
+are members of the "agent specified" group.  This group has the "override other
+groups" flag set, which means it will always win (allowing the agent-specified
+group to always win).  They are also members of the "Test Agents" group, which
+is classified with the `class_testing` class.  This class' sole purpose is to
+evaluate a top-scope variable and `include` its value if it's set.
 
 Nodes can be a member of the test group based on whatever logic is appropriate.
 For example, maybe this group matches the value of `clientcert` against a
@@ -86,10 +72,20 @@ agents while taking advantage of the `agent-specified` setting to allow
 minimal-friction testing of test agents, such as short-lived vagrant instances
 or cloud instances.
 
+__`class_testing`__
+
+```puppet
+class class_testing {
+  if $::test_class {
+    include $::test_class
+  }
+}
+```
+
 And a test run:
 
 ```shell
-FACTER_testclass=role::something::new \
+FACTER_test_class=role::something::new \
   puppet agent -t --environment=feature43
 ```
 
@@ -111,7 +107,7 @@ test group.  When you set the "agent-specified" group's classification, the
 node classifier will search for the test class in the `modulepath` for that
 environment.  If it's not there, you cannot classify that test group with it.
 
-## Solution #2
+## Method #2
 
 `site.pp` can be utilized to offer similiar functionality as solution #1.
 However, keep in mind that `site.pp` is global, so some precautions would need
@@ -144,7 +140,7 @@ FACTER_testclass=role::something::new \
   puppet agent -t --environment=feature43
 ```
 
-## Solution #3
+## Method #3
 
 See [https://docs.google.com/a/puppetlabs.com/drawings/d/1qTbdrtobn-PI97z1z9kQ3WWLnQD_pL4ovH_6qXt0mhQ/edit](https://docs.google.com/a/puppetlabs.com/drawings/d/1qTbdrtobn-PI97z1z9kQ3WWLnQD_pL4ovH_6qXt0mhQ/edit)
 
